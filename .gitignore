@@ -2,6 +2,11 @@
 Session.vim
 tags
 
+# Project layout
+debug
+release
+doc
+
 # Prerequisites
 *.d
 

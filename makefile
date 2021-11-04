@@ -12,14 +12,14 @@ DEBUGDIR := $(PROJDIR)/debug
 TEST  = test
 TEST_TARGET = $(BUILDDIR)/$(TEST)
 
-CFLAGS = -g -Wall -Werror -std=c11 -I$(SOURCEDIR)
-LDLIBS = 
+CFLAGS = -Wall -Werror -std=c11 -I$(SOURCEDIR)
+LDLIBS = -lpthread
 ifeq ($(DEBUG),1)
-	CFLAGS +=
+	CFLAGS += -g
 	LDLIBS +=
 	BUILDDIR := $(DEBUGDIR)
 else
-	CFLAGS += -fPIC -flto -O3 
+	CFLAGS += -fPIC -flto -O3 -DNDEBUG
 	LDLIBS += -flto -fPIC
 	BUILDDIR := $(RELEASEDIR)
 endif
@@ -68,6 +68,7 @@ $(BUILDDIR)/$(TEST).o: $(TESTDIR)/$(TEST).c
 	$(HIDE)$(CC) -c $(CFLAGS) -o $@ $< -MMD
 
 -include $(DEPS)
+-include $(BUILDDIR)/$(TEST).d
 
 # Generate rules
 $(BUILDDIR)/%.o: $(SOURCEDIR)/%.c makefile

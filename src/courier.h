@@ -22,6 +22,10 @@
  *
  */
 
+/*
+ * Version 1.0.0 - November 3rd, 2021
+ */
+
 /** \file courier.h
  * \brief A thread-safe multi-producer / multi-consumer queue in C.
 

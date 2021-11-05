@@ -14,7 +14,7 @@ static void
 test_create_destroy(void)
 {
     Courier cr = courier_new();
-    courier_destroy(&cr);
+    courier_destroy(&cr, NULL);
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -26,15 +26,25 @@ static void
 test_single_threaded(void)
 {
     Courier cr = courier_new();
-    courier_open(&cr);
+    courier_register_sender(&cr);
+    courier_register_receiver(&cr);
+
+    // Neither of these calls should block because a sender and receiver were registered above.
+    courier_wait_until_ready_to_send(&cr);
+    courier_wait_until_ready_to_receive(&cr);
 
     for (size_t i = 1; i <= COURIER_QUEUE_SIZE; ++i) {
-        courier_send(&cr, (void *)i);
+        bool success = courier_send(&cr, (void *)i);
+        g_assert(success);
     }
 
-    courier_close(&cr);
+    courier_done_sending(&cr);
 
-    courier_wait_until_ready(&cr);
+    // At this point, there are no senders registered! But there is data in the queue, so this
+    // still shouldn't block. It's also unecesasry, but doesn't hurt either. And it's a good way to
+    // test that a Courier with no registered senders but some data in the queue is still ready to
+    // receive.
+    courier_wait_until_ready_to_receive(&cr);
 
     void *ptr = 0;
     size_t count = 0;
@@ -48,9 +58,11 @@ test_single_threaded(void)
         prev_i = i;
     }
 
+    courier_done_receiving(&cr);
+
     g_assert_cmpint(count, ==, COURIER_QUEUE_SIZE);
 
-    courier_destroy(&cr);
+    courier_destroy(&cr, NULL);
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -63,13 +75,15 @@ producer(void *arg)
 {
     Courier *cr = arg;
 
-    courier_open(cr);
+    courier_register_sender(cr);
+    courier_wait_until_ready_to_send(cr);
 
     for (size_t i = 1; i <= 1000000; ++i) {
-        courier_send(cr, (void *)i);
+        bool success = courier_send(cr, (void *)i);
+        g_assert(success);
     }
 
-    courier_close(cr);
+    courier_done_sending(cr);
 
     return 0;
 }
@@ -82,7 +96,8 @@ multiple_consumer_from_single_producer(void *arg)
     size_t max_val = 0;
     size_t count = 0;
 
-    courier_wait_until_ready(cr);
+    courier_register_receiver(cr);
+    courier_wait_until_ready_to_receive(cr);
 
     void *ptr = 0;
     size_t prev_val = 0;
@@ -97,6 +112,8 @@ multiple_consumer_from_single_producer(void *arg)
 
         prev_val = val;
     }
+
+    courier_done_receiving(cr);
 
     fprintf(stdout, "     %zu recieved, max value received %zu\n", count, max_val);
 
@@ -124,7 +141,7 @@ test_single_producer_multiple_consumer(void)
         pthread_join(consumers[i], 0);
     }
 
-    courier_destroy(&cr);
+    courier_destroy(&cr, NULL);
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -142,7 +159,8 @@ single_consumer(void *arg)
     size_t max_val = 0;
     size_t count = 0;
 
-    courier_wait_until_ready(cr);
+    courier_register_receiver(cr);
+    courier_wait_until_ready_to_receive(cr);
 
     void *ptr = 0;
     size_t prev_val = 0;
@@ -161,6 +179,8 @@ single_consumer(void *arg)
 
         prev_val = val;
     }
+
+    courier_done_receiving(cr);
 
     fprintf(stdout, "     %zu recieved, max value received %zu\n", count, max_val);
     fprintf(stdout,
@@ -191,7 +211,7 @@ test_multiple_producer_single_consumer(void)
         pthread_join(producers[i], 0);
     }
 
-    courier_destroy(&cr);
+    courier_destroy(&cr, NULL);
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -209,7 +229,8 @@ multiple_consumer(void *arg)
     size_t max_val = 0;
     size_t count = 0;
 
-    courier_wait_until_ready(cr);
+    courier_register_receiver(cr);
+    courier_wait_until_ready_to_receive(cr);
 
     void *ptr = 0;
     while ((ptr = courier_receive(cr))) {
@@ -222,6 +243,8 @@ multiple_consumer(void *arg)
     }
 
     fprintf(stdout, "     %zu recieved, max value received %zu\n", count, max_val);
+
+    courier_done_receiving(cr);
 
     g_assert_cmpint(count, <=, 4 * 1000000);
     g_assert_cmpint(max_val, <=, 1000000);
@@ -252,7 +275,29 @@ test_multiple_producer_multiple_consumer(void)
         pthread_join(consumers[i], 0);
     }
 
-    courier_destroy(&cr);
+    courier_destroy(&cr, NULL);
+}
+
+/*-------------------------------------------------------------------------------------------------
+ *
+ *                                    Test Abort Conditions
+ *
+ *-----------------------------------------------------------------------------------------------*/
+static void
+test_abort_sending_when_no_senders_registered(void)
+{
+    if (g_test_subprocess()) {
+        Courier cr = courier_new();
+
+        void *x = 0;
+        courier_send(&cr, x);
+
+        courier_destroy(&cr, NULL);
+    }
+
+    g_test_trap_subprocess(NULL, 0, 0);
+    g_test_trap_assert_failed();
+    g_test_trap_assert_stderr("LOGIC ERROR - courier channel closed, no producers, cannot send.\n");
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -274,6 +319,8 @@ main(int argc, char *argv[static 1])
                     test_multiple_producer_single_consumer);
     g_test_add_func("/courier/multiple_producer_multiple_consumer",
                     test_multiple_producer_multiple_consumer);
+    g_test_add_func("/courier/test_abort_sending_when_no_senders_registered",
+                    test_abort_sending_when_no_senders_registered);
 
     //
     // Run tests

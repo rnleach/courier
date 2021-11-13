@@ -23,7 +23,7 @@
  */
 
 /*
- * Version 2.0.1 - November 11th, 2021
+ * Version 2.0.2 - November 13th, 2021
  */
 
 /** \file courier.h
@@ -39,7 +39,6 @@ It is also expected that this queue will only pass pointers since the items are 
 large amount of memory.
  */
 #include <assert.h>
-#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,8 +64,8 @@ typedef struct Courier {
     pthread_mutex_t mtx;
     pthread_cond_t space_available;
     pthread_cond_t data_available;
-    unsigned int _Atomic num_producers;
-    unsigned int _Atomic num_consumers;
+    unsigned int num_producers;
+    unsigned int num_consumers;
     void *buf[COURIER_QUEUE_SIZE];
 } Courier;
 
@@ -81,8 +80,8 @@ courier_new(void)
         .mtx = PTHREAD_MUTEX_INITIALIZER,
         .space_available = PTHREAD_COND_INITIALIZER,
         .data_available = PTHREAD_COND_INITIALIZER,
-        .num_producers = ATOMIC_VAR_INIT(0),
-        .num_consumers = ATOMIC_VAR_INIT(0),
+        .num_producers = 0,
+        .num_consumers = 0,
         .buf = {0},
     };
 }
@@ -218,10 +217,10 @@ static inline void
 courier_done_sending(Courier *cr)
 {
     assert(cr);
-    assert(cr->num_producers > 0);
 
     int rc = pthread_mutex_lock(&cr->mtx);
     assert(!rc);
+    assert(cr->num_producers > 0);
 
     cr->num_producers -= 1;
 
@@ -279,13 +278,14 @@ courier_send(Courier *cr, void *data)
 {
     assert(cr);
 
+    int rc = pthread_mutex_lock(&cr->mtx);
+    assert(!rc);
+
     if (cr->num_producers == 0) {
         fprintf(stderr, "LOGIC ERROR - courier channel closed, no producers, cannot send.\n");
         exit(EXIT_FAILURE);
     }
 
-    int rc = pthread_mutex_lock(&cr->mtx);
-    assert(!rc);
     while (cr->count == COURIER_QUEUE_SIZE && cr->num_consumers > 0) {
         pthread_cond_wait(&cr->space_available, &cr->mtx);
     }

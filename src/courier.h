@@ -23,7 +23,7 @@
  */
 
 /*
- * Version 2.0.2 - November 13th, 2021
+ * Version 2.0.4 - November 13th, 2021
  */
 
 /** \file courier.h
@@ -180,10 +180,13 @@ courier_register_sender(Courier *cr)
 
     cr->num_producers += 1;
 
-    // Broadcast here so any threads blocked in courier_wait_until_ready_to_receive() can progress.
-    rc = pthread_cond_broadcast(&cr->data_available);
-    if (rc) {
-        fputs("Error broadcasting data_available after registering sender!\n", stderr);
+    if (cr->num_producers == 1) {
+        // Broadcast here so any threads blocked in courier_wait_until_ready_to_receive() can
+        // progress. If the num_producers is greater than 1, then this signal was already sent.
+        rc = pthread_cond_broadcast(&cr->data_available);
+        if (rc) {
+            fputs("Error broadcasting data_available after registering sender!\n", stderr);
+        }
     }
 
     rc = pthread_mutex_unlock(&cr->mtx);
@@ -201,11 +204,14 @@ courier_register_receiver(Courier *cr)
 
     cr->num_consumers += 1;
 
-    // Broadcast here so any threads blocked in courier_wait_until_ready_to_send() can progress.
-    rc = pthread_cond_broadcast(&cr->space_available);
+    if (cr->num_consumers == 1) {
+        // Broadcast here so any threads blocked in courier_wait_until_ready_to_send() can progress.
+        // If num_consumers > 1, then this message was already sent.
+        rc = pthread_cond_broadcast(&cr->space_available);
 
-    if (rc) {
-        fputs("Error broadcasting space_available after registering receiver!\n", stderr);
+        if (rc) {
+            fputs("Error broadcasting space_available after registering receiver!\n", stderr);
+        }
     }
 
     rc = pthread_mutex_unlock(&cr->mtx);
@@ -224,12 +230,23 @@ courier_done_sending(Courier *cr)
 
     cr->num_producers -= 1;
 
-    // Broadcast in case anyone is waiting for data to come available that won't!
-    // This will let them check the num_producers variable and realize nothing is coming.
-    rc = pthread_cond_broadcast(&cr->data_available);
+    if (cr->num_producers == 0) {
+        // Broadcast in case anyone is waiting for data to come available that won't!
+        // This will let them check the num_producers variable and realize nothing is coming.
+        rc = pthread_cond_broadcast(&cr->data_available);
 
-    if (rc) {
-        fputs("Error broadcasting data_available after deregistering sender!\n", stderr);
+        if (rc) {
+            fputs("Error broadcasting data_available after deregistering sender!\n", stderr);
+        }
+
+    } else {
+        // Deadlock may occur if I don't do this. This thread got signaled when others should
+        // have.
+        rc = pthread_cond_broadcast(&cr->space_available);
+
+        if (rc) {
+            fputs("Error broadcasting space_available after deregistering sender!\n", stderr);
+        }
     }
 
     rc = pthread_mutex_unlock(&cr->mtx);
@@ -248,13 +265,23 @@ courier_done_receiving(Courier *cr)
 
     cr->num_consumers -= 1;
 
-    // Broadcast in case anyone is waiting to send data that they never will be able too!
-    // This will let them check the num_consumers variable and realize space will never become
-    // available.
-    rc = pthread_cond_broadcast(&cr->space_available);
+    if (cr->num_consumers == 0) {
+        // Broadcast in case anyone is waiting to send data that they never will be able too!
+        // This will let them check the num_consumers variable and realize space will never become
+        // available.
+        rc = pthread_cond_broadcast(&cr->space_available);
 
-    if (rc) {
-        fputs("Error broadcasting space_available after deregistering receiver!\n", stderr);
+        if (rc) {
+            fputs("Error broadcasting space_available after deregistering receiver!\n", stderr);
+        }
+    } else {
+        // Deadlock may occur if I don't do this. This thread got signaled when others should
+        // have.
+        rc = pthread_cond_broadcast(&cr->data_available);
+
+        if (rc) {
+            fputs("Error broadcasting space_available after deregistering sender!\n", stderr);
+        }
     }
 
     rc = pthread_mutex_unlock(&cr->mtx);
@@ -301,7 +328,11 @@ courier_send(Courier *cr, void *data)
     cr->tail += 1;
     cr->count += 1;
 
-    pthread_cond_broadcast(&cr->data_available);
+    // If the count was increased to 1, then someone may have been waiting to be notified!
+    if (cr->count == 1) {
+        pthread_cond_signal(&cr->data_available);
+    }
+
     rc = pthread_mutex_unlock(&cr->mtx);
     assert(!rc);
 
@@ -338,7 +369,12 @@ courier_receive(Courier *cr)
         cr->count -= 1;
     }
 
-    pthread_cond_broadcast(&cr->space_available);
+    // If the queue was full before, we should send a signal to let others know it's got space
+    // available now.
+    if (cr->count + 1 == COURIER_QUEUE_SIZE) {
+        pthread_cond_signal(&cr->space_available);
+    }
+
     rc = pthread_mutex_unlock(&cr->mtx);
     assert(!rc);
 

@@ -1,6 +1,7 @@
 # Editor, IDE, and coding tools
 Session.vim
 tags
+.vscode
 
 # Project layout
 debug

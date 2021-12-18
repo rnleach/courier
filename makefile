@@ -19,8 +19,8 @@ ifeq ($(DEBUG),1)
 	LDLIBS +=
 	BUILDDIR := $(DEBUGDIR)
 else
-	CFLAGS += -fPIC -flto -O3 -DNDEBUG
-	LDLIBS += -flto -fPIC
+	CFLAGS += -fPIC -O3 -DNDEBUG
+	LDLIBS += -fPIC
 	BUILDDIR := $(RELEASEDIR)
 endif
 

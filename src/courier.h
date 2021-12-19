@@ -1,4 +1,5 @@
 #pragma once
+#pragma clang diagnostic ignored "-Wunknown-warning-option"
 /*
  * Copyright (c) 2021 Ryan Leach
  *
@@ -23,7 +24,7 @@
  */
 
 /*
- * Version 2.0.5 - December 18th, 2021
+ * Version 2.0.6 - TODO: DATE NEXT VERSION
  */
 
 /** \file courier.h
